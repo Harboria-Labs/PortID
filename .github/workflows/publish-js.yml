@@ -24,12 +24,18 @@ jobs:
         cache: 'npm'
     - name: Install dependencies
       working-directory: ./portid_js_sdk
-      run: npm ci --frozen-lockfile  # Use frozen-lockfile for reproducibility
+      run: |
+        npm ci --frozen-lockfile
+        npm --version  # Debug: Log npm version
     - name: Build package
       working-directory: ./portid_js_sdk
-      run: npm run build  # Ensure this script exists in package.json
+      run: |
+        npm run build
+        ls -la dist/ || echo "No dist directory found"  # Debug: Verify build output
     - name: Publish to npm
       working-directory: ./portid_js_sdk
-      run: npm publish --access public
+      run: |
+        npm whoami  # Debug: Verify authentication
+        npm publish --access public --verbose
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
