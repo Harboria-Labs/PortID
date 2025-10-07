@@ -1,0 +1,35 @@
+name: Publish PortID JavaScript SDK to npm
+
+on:
+  push:
+    tags:
+      - '**'  # Trigger on all tag pushes
+
+jobs:
+  build-and-publish:
+    name: Build and publish to npm
+    runs-on: ubuntu-latest
+    environment:
+      name: npm  # Optional: Create this GitHub environment for added protection (e.g., required reviewers)
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'  # Adjust to your SDK's Node version
+        registry-url: 'https://registry.npmjs.org'
+        cache: 'npm'
+    - name: Install dependencies
+      working-directory: ./portid_js_sdk  # Navigate to JS SDK directory
+      run: npm ci
+    - name: Build package
+      working-directory: ./portid_js_sdk
+      run: npm run build  # Assumes a build script in package.json; adjust if needed
+    - name: Publish to npm
+      working-directory: ./portid_js_sdk
+      run: npm publish --access public  # Use --access restricted for private packages
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
