@@ -3,39 +3,30 @@ name: Publish PortID JavaScript SDK to npm
 on:
   push:
     tags:
-      - '**'  # Trigger on all tag pushes
+      - 'v*'
 
 jobs:
   build-and-publish:
     name: Build and publish to npm
     runs-on: ubuntu-latest
-    environment:
-      name: npm  # Optional: For protection
-
+        
     steps:
-    - uses: actions/checkout@v4
-      with:
-        persist-credentials: false
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        registry-url: 'https://registry.npmjs.org'
-        cache: 'npm'
-    - name: Install dependencies
-      working-directory: ./portid_js_sdk
-      run: |
-        npm ci --frozen-lockfile
-        npm --version  # Debug: Log npm version
-    - name: Build package
-      working-directory: ./portid_js_sdk
-      run: |
-        npm run build
-        ls -la dist/ || echo "No dist directory found"  # Debug: Verify build output
-    - name: Publish to npm
-      working-directory: ./portid_js_sdk
-      run: |
-        npm whoami  # Debug: Verify authentication
-        npm publish --access public --verbose
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies and build
+        working-directory: ./portid-js-sdk  # CORRECTED
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish to npm
+        working-directory: ./portid-js-sdk  # CORRECTED
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

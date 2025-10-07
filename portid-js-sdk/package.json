@@ -1,7 +1,6 @@
 {
   "name": "@harboria-labs/portid-js-sdk",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",  
   "type": "module",
   "main": "./dist/portid-sdk.js",
   "files": [
