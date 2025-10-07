@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="portid-sdk",
+    name="harboria-portid",
     version="0.1.0",
     author="Harboria Labs",
     author_email="contact@harboria.com",
