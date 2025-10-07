@@ -1,5 +1,5 @@
 {
-  "name": "@harboria-labs/portid-js-sdk",
+  "name": "portid-sdk-ticketguy-test",
   "version": "0.1.0",  
   "type": "module",
   "main": "./dist/portid-sdk.js",
