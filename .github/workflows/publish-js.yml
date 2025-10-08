@@ -6,27 +6,24 @@ on:
       - 'v*'
 
 jobs:
-  build-and-publish:
-    name: Build and publish to npm
+  publish:
     runs-on: ubuntu-latest
-        
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Set up Node.js for publishing
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: 'https://registry.npmjs.org/'
 
-      - name: Install dependencies and build
-        working-directory: ./portid-js-sdk  # CORRECTED
+      - name: Build and Publish
+        # This single step does everything inside the correct folder
         run: |
-          npm ci
+          cd portid-js-sdk
+          npm install
           npm run build
-
-      - name: Publish to npm
-        working-directory: ./portid-js-sdk  # CORRECTED
-        run: npm publish --access public
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
