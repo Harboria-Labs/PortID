@@ -151,18 +151,45 @@ export default class PortID {
   }
 
   /**
-   * Logs out the current user.
-   */
-  logout() {
-    this.currentUser = null;
+     * Loads and decrypts the current user's data from the network using their saved recovery key.
+     * @returns {Promise<object>} An object containing the decrypted data.
+     */
+    async loadData() {
+        if (!this.currentUser) {
+            throw new PortIDError("User is not logged in.");
+        }
+        const user = await this.db.users.get(this.currentUser);
+        if (!user || !user.backupHash) {
+            throw new PortIDError("No backup found locally for this user.");
+        }
+
+        const restoreResponse = await this._request(`/api/restore?hash=${user.backupHash}`);
+        const encryptedDataBlob = restoreResponse.kaironBackup || restoreResponse.pinataContent?.kaironBackup;
+        if (!encryptedDataBlob) {
+            throw new PortIDError("Backup data is in an unexpected format.");
+        }
+
+        const decryptedData = this._decryptData(encryptedDataBlob, user.recoveryKey);
+        if (decryptedData === null) {
+            throw new PortIDError("Decryption failed. Local recovery key may be corrupt.");
+        }
+
+      return decryptedData;
   }
 
-  /**
-   * Encrypts and backs up the user's current application data.
-   * @param {object} data - The JSON-serializable data object to back up.
-   * @returns {Promise<string>} The new IPFS hash for the backup.
-   */
-  async backupData(data) {
+/**
+ * Logs out the current user.
+ */
+logout() {
+  this.currentUser = null;
+}
+
+/**
+ * Encrypts and backs up the user's current application data.
+ * @param {object} data - The JSON-serializable data object to back up.
+ * @returns {Promise<string>} The new IPFS hash for the backup.
+ */
+async backupData(data) {
     if (!this.currentUser) {
       throw new PortIDError(
         "User is not logged in. Please call login() first."
