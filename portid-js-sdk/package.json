@@ -1,10 +1,12 @@
 {
   "name": "@harboria-labs/portid-js-sdk",
-  "version": "0.1.1",  
+  "version": "0.2.0",
   "type": "module",
   "main": "./dist/portid-sdk.js",
+  "module": "./src/index.js",
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "dev": "vite",
@@ -15,7 +17,6 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "crypto-js": "^4.2.0",
     "dexie": "^4.0.1"
   }
 }

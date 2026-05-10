@@ -7,9 +7,9 @@ import {
 } from "./encryption.js";
 
 /**
- * Custom error class for SDK-specific issues, making it easier for developers to catch errors.
+ * Custom error class for SDK-specific issues.
  */
-class PortIDError extends Error {
+export class PortIDError extends Error {
   constructor(message) {
     super(message);
     this.name = "PortIDError";
@@ -17,26 +17,27 @@ class PortIDError extends Error {
 }
 
 /**
- * The main SDK class for interacting with the PortID sync service.
- * A developer will create an instance of this class to manage user data for their application.
+ * PortID SDK — Zero-knowledge encrypted data sync.
+ * 
+ * Usage:
+ *   const sdk = new PortID('my-app', 'https://sync.portid.dev');
+ *   const { recoveryKey } = await sdk.signUp('alice', 'password123');
+ *   await sdk.login('alice', 'password123');
+ *   await sdk.backupData({ notes: [...] });
+ *   const data = await sdk.loadData();
  */
 export default class PortID {
   /**
-   * Initializes the SDK.
-   * @param {string} appId - A unique identifier for the application using the SDK.
-   * @param {string} apiBaseUrl - The root URL of the developer's deployed PortID Sync Server.
+   * @param {string} appId - Unique app identifier
+   * @param {string} apiBaseUrl - PortID sync server URL
    */
   constructor(appId, apiBaseUrl) {
     if (!appId || !apiBaseUrl) {
       throw new PortIDError("appId and apiBaseUrl are required.");
     }
     this.appId = appId;
-    this.apiBaseUrl = apiBaseUrl.endsWith("/")
-      ? apiBaseUrl.slice(0, -1)
-      : apiBaseUrl;
+    this.apiBaseUrl = apiBaseUrl.replace(/\/$/, '');
 
-    // The SDK creates and manages its own private IndexedDB database.
-    // The database name is made unique to the app using the SDK to prevent conflicts.
     this.db = new Dexie(`PortID_DB_${appId}`);
     this.db.version(1).stores({
       users: "&username, hashedPassword, recoveryKey, backupHash",
@@ -45,32 +46,22 @@ export default class PortID {
     this.currentUser = null;
   }
 
-  /**
-   * A private helper method for making network requests to the sync server.
-   * @param {string} endpoint - The API endpoint to call (e.g., '/api/set-hash').
-   * @param {object} options - The options for the fetch request (method, headers, body).
-   * @returns {Promise<object>} The JSON response from the API.
-   */
+  // ── Network ─────────────────────────────────────────────────────────────
+
   async _request(endpoint, options = {}) {
-    try {
-      const response = await fetch(`${this.apiBaseUrl}${endpoint}`, options);
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new PortIDError(
-          `API Error: ${errorData.message || response.statusText}`
-        );
-      }
-      return response.json();
-    } catch (error) {
-      throw new PortIDError(`Network or API error: ${error.message}`);
+    const response = await fetch(`${this.apiBaseUrl}${endpoint}`, options);
+    if (!response.ok) {
+      let msg = response.statusText;
+      try { const d = await response.json(); msg = d.error || d.message || msg; } catch {}
+      throw new PortIDError(`API Error (${response.status}): ${msg}`);
     }
+    return response.json();
   }
 
+  // ── Auth ────────────────────────────────────────────────────────────────
+
   /**
-   * Registers a new user, generates their keys, and performs the initial backup.
-   * @param {string} username - The user's desired username.
-   * @param {string} password - The user's desired password.
-   * @returns {Promise<{recoveryKey: string}>} An object containing the Recovery Key for the user to save.
+   * Register a new user. Returns the recovery key (user must save this).
    */
   async signUp(username, password) {
     if (!username || !password) {
@@ -82,68 +73,55 @@ export default class PortID {
       throw new PortIDError("Username already exists locally.");
     }
 
-    // Step 1: Generate the user's cryptographic keys.
-    const recoveryKey = generateRecoveryKey();
-    const hashedPassword = hashPassword(password);
+    // Generate crypto keys
+    const recoveryKey = await generateRecoveryKey();
+    const hashedPassword = await hashPassword(password, `${this.appId}:${username}`);
 
-    // Step 2: Register the username in the central directory with a temporary placeholder.
-    await this._request("/api/set-hash", {
+    // Register on sync server
+    await this._request("/api/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        app_id: this.appId,
-        username,
-        hash: "pending_first_backup",
-      }),
+      body: JSON.stringify({ app_id: this.appId, username }),
     });
 
-    // Step 3: Perform the initial, empty backup to get a real IPFS hash.
-    const initialData = { sdk_version: "1.0.0" };
-    const encryptedData = encryptData(initialData, recoveryKey);
+    // Initial backup
+    const initialData = { _portid: { version: "0.2.0", created: Date.now() } };
+    const encryptedData = await encryptData(initialData, recoveryKey);
 
     const backupResponse = await this._request("/api/backup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ encryptedData, username }),
+      body: JSON.stringify({ encryptedData, username, app_id: this.appId }),
     });
 
     const ipfsHash = backupResponse.ipfsHash;
     if (!ipfsHash) {
-      throw new PortIDError("Initial backup did not return a valid IPFS hash.");
+      throw new PortIDError("Initial backup did not return a valid hash.");
     }
 
-    // Step 4: Update the central directory with the real IPFS hash.
+    // Update directory
     await this._request("/api/set-hash", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ app_id: this.appId, username, hash: ipfsHash }),
     });
 
-    const credentials = {
-      username,
-      hashedPassword,
-      recoveryKey,
-      backupHash: ipfsHash,
-    };
+    // Save credentials locally
+    await this.db.users.add({ username, hashedPassword, recoveryKey, backupHash: ipfsHash });
+    this.currentUser = username;
 
-    // Step 5: The SDK saves the full credentials to its own private database.
-    await this.db.users.add(credentials);
-
-    // Step 6: Return only the recoveryKey for the user to save.
     return { recoveryKey };
   }
 
   /**
-   * Logs in a user on a trusted device by checking credentials against the local DB.
-   * @param {string} username - The user's username.
-   * @param {string} password - The user's password.
-   * @returns {Promise<boolean>} True if login is successful.
+   * Login on a trusted device (checks local credentials).
    */
   async login(username, password) {
     const user = await this.db.users.get(username);
-    const hashedPassword = hashPassword(password);
+    if (!user) return false;
 
-    if (user && user.hashedPassword === hashedPassword) {
+    const hashedPassword = await hashPassword(password, `${this.appId}:${username}`);
+    if (user.hashedPassword === hashedPassword) {
       this.currentUser = username;
       return true;
     }
@@ -151,153 +129,190 @@ export default class PortID {
   }
 
   /**
-     * Loads and decrypts the current user's data from the network using their saved recovery key.
-     * @returns {Promise<object>} An object containing the decrypted data.
-     */
-    async loadData() {
-        if (!this.currentUser) {
-            throw new PortIDError("User is not logged in.");
-        }
-        const user = await this.db.users.get(this.currentUser);
-        if (!user || !user.backupHash) {
-            throw new PortIDError("No backup found locally for this user.");
-        }
-
-        const restoreResponse = await this._request(`/api/restore?hash=${user.backupHash}`);
-        const encryptedDataBlob = restoreResponse.kaironBackup || restoreResponse.pinataContent?.kaironBackup;
-        if (!encryptedDataBlob) {
-            throw new PortIDError("Backup data is in an unexpected format.");
-        }
-
-        const decryptedData = this._decryptData(encryptedDataBlob, user.recoveryKey);
-        if (decryptedData === null) {
-            throw new PortIDError("Decryption failed. Local recovery key may be corrupt.");
-        }
-
-      return decryptedData;
+   * Logout.
+   */
+  logout() {
+    this.currentUser = null;
   }
 
-/**
- * Logs out the current user.
- */
-logout() {
-  this.currentUser = null;
-}
+  /**
+   * Check if a user is logged in.
+   */
+  get isLoggedIn() {
+    return this.currentUser !== null;
+  }
 
-/**
- * Encrypts and backs up the user's current application data.
- * @param {object} data - The JSON-serializable data object to back up.
- * @returns {Promise<string>} The new IPFS hash for the backup.
- */
-async backupData(data) {
+  // ── Data Sync ──────────────────────────────────────────────────────────
+
+  /**
+   * Encrypt and backup data to IPFS.
+   * @param {any} data - JSON-serializable data
+   * @returns {string} IPFS hash
+   */
+  async backupData(data) {
     if (!this.currentUser) {
-      throw new PortIDError(
-        "User is not logged in. Please call login() first."
-      );
+      throw new PortIDError("Not logged in.");
     }
     const user = await this.db.users.get(this.currentUser);
-    if (!user)
-      throw new PortIDError("Could not find user credentials locally.");
+    if (!user) throw new PortIDError("User credentials not found locally.");
 
-    const encryptedData = encryptData(data, user.recoveryKey);
+    const encryptedData = await encryptData(data, user.recoveryKey);
 
     const backupResponse = await this._request("/api/backup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ encryptedData, username: this.currentUser }),
+      body: JSON.stringify({ encryptedData, username: this.currentUser, app_id: this.appId }),
     });
 
     const ipfsHash = backupResponse.ipfsHash;
-    if (!ipfsHash)
-      throw new PortIDError("Backup did not return a valid IPFS hash.");
+    if (!ipfsHash) throw new PortIDError("Backup did not return a valid hash.");
 
+    // Update directory + local
     await this._request("/api/set-hash", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        app_id: this.appId,
-        username: this.currentUser,
-        hash: ipfsHash,
-      }),
+      body: JSON.stringify({ app_id: this.appId, username: this.currentUser, hash: ipfsHash }),
     });
-
     await this.db.users.update(this.currentUser, { backupHash: ipfsHash });
+
     return ipfsHash;
   }
 
   /**
-   * Restores and decrypts user data from the network using their recovery key.
-   * @param {string} username - The user's username.
-   * @param {string} recoveryKey - The user's saved recovery key.
-   * @returns {Promise<object>} An object containing the decrypted data.
+   * Load and decrypt the current user's data from IPFS.
+   * @returns {any} Decrypted data
    */
-  async restoreData(username, recoveryKey) {
-    // 1. Get the backup location from the central directory.
-    const { ipfsHash } = await this._request(
-      `/api/get-hash?app_id=${this.appId}&username=${username}`
-    );
-    if (!ipfsHash)
-      throw new PortIDError("Could not find a backup hash for this user.");
-
-    // 2. Download the encrypted data from IPFS.
-    const restoreResponse = await this._request(
-      `/api/restore?hash=${ipfsHash}`
-    );
-    const encryptedDataBlob =
-      restoreResponse.kaironBackup ||
-      restoreResponse.pinataContent?.kaironBackup;
-    if (!encryptedDataBlob)
-      throw new PortIDError("Backup data blob is in an unexpected format.");
-
-    // 3. Decrypt the data. This also verifies the recovery key is correct.
-    const decryptedData = decryptData(encryptedDataBlob, recoveryKey);
-    if (decryptedData === null) {
-      throw new PortIDError(
-        "Decryption failed. The Recovery Key is likely incorrect."
-      );
+  async loadData() {
+    if (!this.currentUser) {
+      throw new PortIDError("Not logged in.");
+    }
+    const user = await this.db.users.get(this.currentUser);
+    if (!user || !user.backupHash) {
+      throw new PortIDError("No backup found for this user.");
     }
 
-    // 4. Save the user's profile to this new device's local DB.
-    // Password must be set separately by the application after this step.
-    await this.db.users.put({
-      username,
-      recoveryKey,
-      backupHash: ipfsHash,
-      hashedPassword: null,
-    });
+    const restoreResponse = await this._request(`/api/restore?hash=${user.backupHash}`);
+    const encryptedBlob = restoreResponse.kaironBackup || restoreResponse.pinataContent?.kaironBackup;
+    if (!encryptedBlob) {
+      throw new PortIDError("Backup data is in an unexpected format.");
+    }
+
+    const decryptedData = await decryptData(encryptedBlob, user.recoveryKey);
+    if (decryptedData === null) {
+      throw new PortIDError("Decryption failed. Recovery key may be incorrect.");
+    }
 
     return decryptedData;
   }
 
   /**
-   * Registers a periodic background sync event to enable automatic backups.
-   * The application's service worker must be configured to handle the 'portid-auto-backup' event.
-   * @param {number} [minIntervalHours=12] - The minimum interval in hours between backups.
+   * Restore data on a new device using username + recovery key.
+   * @param {string} username
+   * @param {string} recoveryKey
+   * @returns {any} Decrypted data
+   */
+  async restoreData(username, recoveryKey) {
+    const { ipfsHash } = await this._request(
+      `/api/get-hash?app_id=${this.appId}&username=${username}`
+    );
+    if (!ipfsHash) throw new PortIDError("No backup found for this user.");
+
+    const restoreResponse = await this._request(`/api/restore?hash=${ipfsHash}`);
+    const encryptedBlob = restoreResponse.kaironBackup || restoreResponse.pinataContent?.kaironBackup;
+    if (!encryptedBlob) throw new PortIDError("Backup data format unexpected.");
+
+    const decryptedData = await decryptData(encryptedBlob, recoveryKey);
+    if (decryptedData === null) {
+      throw new PortIDError("Decryption failed. Recovery key is incorrect.");
+    }
+
+    // Save to local DB for future logins
+    await this.db.users.put({ username, recoveryKey, backupHash: ipfsHash, hashedPassword: null });
+
+    // Register new device
+    await this._request("/api/device/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: this.appId, username }),
+    });
+
+    this.currentUser = username;
+    return decryptedData;
+  }
+
+  // ── Integration (existing auth) ───────────────────────────────────────
+
+  /**
+   * Attach PortID encrypted sync to an existing authenticated user.
+   * Use when you already have auth (Firebase, Clerk, etc.) and want to
+   * add encrypted data sync without replacing your login system.
+   * 
+   * @param {string} externalUserId - Your existing user ID (from Firebase, etc.)
+   * @returns {{ recoveryKey: string }} Recovery key for this user
+   */
+  async attachToExistingUser(externalUserId) {
+    if (!externalUserId) throw new PortIDError("externalUserId required.");
+
+    const username = `ext_${externalUserId}`;
+    const existingUser = await this.db.users.get(username);
+    
+    if (existingUser) {
+      // Already attached — just log in
+      this.currentUser = username;
+      return { recoveryKey: existingUser.recoveryKey, existing: true };
+    }
+
+    // Generate new recovery key for this user
+    const recoveryKey = await generateRecoveryKey();
+
+    // Register on sync server
+    try {
+      await this._request("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app_id: this.appId, username }),
+      });
+    } catch (e) {
+      // May already exist from another device
+      if (!e.message.includes('409')) throw e;
+    }
+
+    // Initial backup
+    const initialData = { _portid: { version: "0.2.0", created: Date.now(), external_id: externalUserId } };
+    const encryptedData = await encryptData(initialData, recoveryKey);
+    const { ipfsHash } = await this._request("/api/backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ encryptedData, username, app_id: this.appId }),
+    });
+
+    await this._request("/api/set-hash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ app_id: this.appId, username, hash: ipfsHash }),
+    });
+
+    await this.db.users.add({ username, hashedPassword: null, recoveryKey, backupHash: ipfsHash });
+    this.currentUser = username;
+
+    return { recoveryKey, existing: false };
+  }
+
+  // ── Auto-backup ───────────────────────────────────────────────────────
+
+  /**
+   * Register periodic background sync (requires service worker).
    */
   async enableAutoBackup(minIntervalHours = 12) {
     if (!("serviceWorker" in navigator)) {
-      throw new PortIDError(
-        "Service Workers are not supported by this browser."
-      );
+      throw new PortIDError("Service Workers not supported.");
     }
-
     const registration = await navigator.serviceWorker.ready;
     if (!("periodicSync" in registration)) {
-      throw new PortIDError(
-        "Periodic Background Sync is not supported by this browser."
-      );
+      throw new PortIDError("Periodic Background Sync not supported.");
     }
-
-    try {
-      await registration.periodicSync.register("portid-auto-backup", {
-        minInterval: minIntervalHours * 60 * 60 * 1000,
-      });
-      console.log("PortID auto-backup has been registered.");
-    } catch (error) {
-      throw new PortIDError(
-        `Auto-backup registration failed: ${error.message}`
-      );
-    }
+    await registration.periodicSync.register("portid-auto-backup", {
+      minInterval: minIntervalHours * 60 * 60 * 1000,
+    });
   }
 }
-
