@@ -1,0 +1,10 @@
+{
+  "name": "create-portid-app",
+  "version": "0.2.0",
+  "type": "module",
+  "bin": {
+    "create-portid-app": "./index.js"
+  },
+  "files": ["index.js", "templates"],
+  "keywords": ["portid", "zero-knowledge", "encryption", "sync", "scaffold"]
+}

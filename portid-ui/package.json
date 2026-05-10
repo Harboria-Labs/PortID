@@ -1,0 +1,20 @@
+{
+  "name": "@harboria-labs/portid-ui",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./src/portid-login.js",
+  "module": "./src/portid-login.js",
+  "exports": {
+    ".": "./src/portid-login.js",
+    "./react": "./src/PortIDLogin.jsx",
+    "./web-component": "./src/portid-login.js"
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "@harboria-labs/portid-js-sdk": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
+  }
+}
