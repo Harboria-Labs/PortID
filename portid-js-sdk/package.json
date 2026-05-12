@@ -2,8 +2,15 @@
   "name": "@harboria-labs/portid-js-sdk",
   "version": "0.2.0",
   "type": "module",
-  "main": "./dist/portid-sdk.js",
-  "module": "./src/index.js",
+  "main": "./dist/portid-sdk.umd.cjs",
+  "module": "./dist/portid-sdk.js",
+  "exports": {
+    ".": {
+      "import": "./dist/portid-sdk.js",
+      "require": "./dist/portid-sdk.umd.cjs"
+    },
+    "./src/encryption.js": "./src/encryption.js"
+  },
   "files": [
     "dist",
     "src"
@@ -11,12 +18,27 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "vite": "^5.0.0"
   },
   "dependencies": {
     "dexie": "^4.0.1"
-  }
+  },
+  "keywords": [
+    "portid",
+    "encryption",
+    "zero-knowledge",
+    "sync",
+    "ipfs",
+    "e2ee"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Harboria-Labs/PortID.git",
+    "directory": "portid-js-sdk"
+  },
+  "license": "MIT"
 }
